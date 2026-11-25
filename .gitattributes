@@ -1,0 +1,2 @@
+# Script shell luôn dùng LF để chạy được trong WSL/Linux kể cả khi clone bằng Git trên Windows
+*.sh text eol=lf
