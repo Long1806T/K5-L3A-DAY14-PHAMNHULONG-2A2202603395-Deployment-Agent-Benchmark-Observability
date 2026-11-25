@@ -124,9 +124,38 @@ flowchart LR
 
 ## Part 3: Cloud Deployment
 
-> Làm ở CP6 sau Part 6 (deploy chính agent `06-lab-complete/`). Xem thêm `DEPLOYMENT.md`.
+> Lớp K5 deploy luôn agent Part 6 (`06-lab-complete/`) ở CP6. Chi tiết: [`DEPLOYMENT.md`](DEPLOYMENT.md).
 
-⏳ (điền sau khi deploy)
+### Exercise 3.1: Railway deployment (nền tảng chính)
+
+- **URL:** ⏳ `https://<điền-sau-khi-deploy>.up.railway.app`
+- **Cách deploy:** `cd 06-lab-complete && railway up`. Railway đọc `railway.toml`, build bằng `Dockerfile`. Project có 2 service là `agent` và `Redis`. `REDIS_URL` của agent tham chiếu tới Redis (`${{Redis.REDIS_URL}}`). `AGENT_API_KEY` đặt trong tab Variables, không ghi trong code.
+- **4 lệnh tự kiểm (CP6):** ⏳ `/health` 200 · `/ready` 200 · `/ask` không key 401 · `/ask` có key 200
+- **Screenshot:** `screenshots/dashboard.png`, `screenshots/running.png`, `screenshots/test.png` ⏳
+
+### Exercise 3.2: So sánh `railway.toml` và `render.yaml` (`06-lab-complete/`)
+
+| Khía cạnh | `railway.toml` | `render.yaml` (Blueprint) |
+|-----------|----------------|---------------------------|
+| Phạm vi | Config-as-code cho **một service**: build và deploy service đó như thế nào | Infrastructure-as-code cho **cả stack**: web service + Redis (Key Value) trong cùng một file |
+| Build | `builder = "DOCKERFILE"`, `dockerfilePath = "Dockerfile"` | `runtime: docker`, `rootDir: 06-lab-complete`, `dockerfilePath` và `dockerContext` tính từ `rootDir` |
+| Health check | `healthcheckPath = "/health"`, `healthcheckTimeout = 100`: Railway chỉ chuyển traffic sang bản mới khi `/health` trả 200 | `healthCheckPath: /health`: Render dùng cho zero-downtime deploy và tự restart khi instance không còn khỏe |
+| Restart | `restartPolicyType = "ON_FAILURE"`, tối đa 3 lần | Render tự quản lý, không có trường riêng |
+| Biến môi trường & secret | **Không** nằm trong file: đặt bằng Dashboard/CLI (`railway variable set ...`); Redis nối qua biến tham chiếu `${{Redis.REDIS_URL}}` | Khai báo trong `envVars`: giá trị thường ghi thẳng, `AGENT_API_KEY` dùng `generateValue: true` (Render tự sinh), `REDIS_URL` dùng `fromService` → `connectionString` |
+| Redis | Thêm riêng: `railway add --database redis` | Khai báo luôn trong file: `type: keyvalue`, `plan: free`, `ipAllowList: []` (chỉ mạng nội bộ), `maxmemoryPolicy: noeviction` |
+| Region / plan | Chọn trên Dashboard | Ghi trong file: `region: singapore`, `plan: free` |
+| Cổng | Railway cấp `PORT`; `CMD` dùng `${PORT:-8000}` | Render cấp `PORT` (mặc định 10000); cùng một `CMD` |
+| Vị trí file | `railway up` chạy trong `06-lab-complete/` nên tự thấy file. Deploy từ GitHub thì phải trỏ *Config file path* tuyệt đối `/06-lab-complete/railway.toml` | Blueprint mặc định tìm `render.yaml` ở gốc repo, nên phải điền *Blueprint Path* `06-lab-complete/render.yaml` |
+
+**Vì sao khác nhau:** Railway tách phần *build/deploy một service* (nằm trong file) khỏi phần *hạ tầng* (database, biến môi trường, domain), phần sau quản lý trên project canvas. Render Blueprint mô tả toàn bộ hạ tầng trong git, nên tạo lại cả stack (agent + Redis + nối biến) chỉ bằng một file. Đổi lại, Render phải dùng `generateValue`/`sync: false` để không ghi secret vào file, còn Railway thì để secret ngoài file từ đầu. So với `03-cloud-deployment/railway/railway.toml` (dùng `NIXPACKS` + `startCommand`), bản Part 6 dùng `DOCKERFILE` để image trên cloud giống hệt image đã test ở local (dev/prod parity).
+
+### Exercise 3.3: Pipeline CI/CD Cloud Run (`03-cloud-deployment/production-cloud-run/`)
+
+1. Push lên `main` kích hoạt Cloud Build chạy `cloudbuild.yaml`. Bước **test** dùng image `python:3.11-slim`, cài requirements + pytest và chạy `pytest tests/`; test fail thì pipeline dừng, không deploy.
+2. Bước **build** chạy `docker build`, gắn 2 tag `:$COMMIT_SHA` và `:latest`, dùng `--cache-from ...:latest` để tận dụng layer cache. Bước **push** đẩy cả 2 tag lên Container Registry (`gcr.io/$PROJECT_ID/ai-agent`).
+3. Bước **deploy** chạy `gcloud run deploy` bằng đúng image `:$COMMIT_SHA` (bản vừa test), region `asia-southeast1`, 1–10 instance, 512Mi/1 CPU, timeout 60s, `ENVIRONMENT=production`, còn `OPENAI_API_KEY` lấy từ Secret Manager (không nằm trong code).
+4. `service.yaml` mô tả cùng service theo kiểu khai báo (Knative): `minScale: 1` để tránh cold start, `maxScale: 10`, `containerConcurrency: 80`, giới hạn CPU/RAM, secret qua `secretKeyRef`, `livenessProbe` gọi `/health`, `startupProbe` gọi `/ready`. Áp dụng bằng `gcloud run services replace service.yaml`.
+5. Nhận xét: thư mục mẫu không có `tests/`, nên nếu chạy nguyên trạng thì bước test sẽ fail. Đây là cơ chế quality gate: không qua test thì không có image mới để deploy.
 
 ---
 
